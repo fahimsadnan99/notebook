@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Pencil, Trash2, Copy, FileImage, FileJson, Upload, LogOut, LogIn, BookOpen, CloudUpload, Plus, FileText,
-  Sparkles, ImagePlus, Image as ImageIcon, Wand2, Mic, Focus, Sun, PanelLeft, Download, Maximize, Keyboard, X, MonitorDown, FileUp, Star, Brain, Presentation, MessagesSquare, Repeat, FolderInput, FolderPlus, Link2, Users, PenOff, Eraser,
+  Sparkles, ImagePlus, Image as ImageIcon, Wand2, Mic, Focus, Sun, PanelLeft, Download, Maximize, Keyboard, X, MonitorDown, FileUp, Star, Brain, Presentation, MessagesSquare, Repeat, FolderInput, FolderPlus, Link2, Users, PenOff, Eraser, Lock,
 } from "lucide-react";
+import { lock as lockApp, unlockedUntil } from "./lib/gate.js";
 import Sidebar from "./components/Sidebar.jsx";
 import TopBar from "./components/TopBar.jsx";
 import Login from "./components/Login.jsx";
@@ -613,6 +614,9 @@ export default function App() {
     mode === "cloud" && hasLocalData() && { label: "Copy local notebooks to cloud", icon: CloudUpload, onClick: uploadLocal },
     mode === "cloud" && { label: "Sign out", icon: LogOut, onClick: async () => { await flush(); signOutUser(); } },
     mode === "local" && cloudConfigured && { label: "Sign in for cloud sync", icon: LogIn, onClick: () => setPhase("login") },
+    { type: "sep" },
+    { label: "Lock now", icon: Lock, hint: unlockedUntil() ? `asks again ${new Date(unlockedUntil()).toLocaleDateString()}` : "",
+      onClick: async () => { await flush(); lockApp(); location.reload(); } },
   ];
   const aiItems = [
     { label: "Ask your notes…", icon: MessagesSquare, onClick: () => setShowAsk(true) },

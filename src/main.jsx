@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
+import Gate from "./components/Gate.jsx";
 import { DialogProvider } from "./components/Dialogs.jsx";
 import "./styles.css";
 
@@ -10,7 +11,9 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 }
 
 createRoot(document.getElementById("root")).render(
-  <DialogProvider>
-    <App />
-  </DialogProvider>
+  <Gate>
+    <DialogProvider>
+      <App />
+    </DialogProvider>
+  </Gate>
 );
