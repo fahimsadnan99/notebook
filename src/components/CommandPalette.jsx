@@ -1,16 +1,36 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Search, CornerDownLeft } from "lucide-react";
+import { Search, CornerDownLeft, FileSearch, Loader2 } from "lucide-react";
 
-export default function CommandPalette({ commands, onClose }) {
+export default function CommandPalette({ commands, onClose, onSearch, onOpenResult }) {
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
+  const [found, setFound] = useState({ q: "", items: [], busy: false });
   const listRef = useRef(null);
+
+  // Search inside every page's words (debounced), shown after the matching commands.
+  useEffect(() => {
+    const t = q.trim();
+    if (!onSearch || t.length < 2) { setFound({ q: t, items: [], busy: false }); return; }
+    setFound((f) => ({ ...f, busy: true }));
+    let live = true;
+    const timer = setTimeout(async () => {
+      try { const items = await onSearch(t); if (live) setFound({ q: t, items, busy: false }); }
+      catch { if (live) setFound({ q: t, items: [], busy: false }); }
+    }, 250);
+    return () => { live = false; clearTimeout(timer); };
+  }, [q, onSearch]);
 
   const list = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return commands;
-    return commands.filter((c) => (c.label + " " + (c.group || "") + " " + (c.keywords || "")).toLowerCase().includes(t));
-  }, [q, commands]);
+    const cmds = commands.filter((c) => (c.label + " " + (c.group || "") + " " + (c.keywords || "")).toLowerCase().includes(t));
+    const have = new Set(cmds.map((c) => c.id));
+    const notes = found.items.filter((r) => !have.has("pg" + r.id)).map((r) => ({
+      id: "found-" + r.id, label: `${r.icon ? r.icon + " " : ""}${r.title}`, sub: r.snippet ? `${r.nbName} · ${r.snippet}` : r.nbName,
+      group: "In notes", icon: FileSearch, run: () => onOpenResult(r),
+    }));
+    return [...cmds, ...notes];
+  }, [q, commands, found, onOpenResult]);
 
   useEffect(() => setIdx(0), [q]);
   useEffect(() => {
@@ -31,7 +51,7 @@ export default function CommandPalette({ commands, onClose }) {
         }}>
         <div className="pal-input">
           <Search size={17} />
-          <input autoFocus placeholder="Search pages, notebooks and actions…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input autoFocus placeholder="Search notes, pages and actions…" value={q} onChange={(e) => setQ(e.target.value)} />
           <kbd>Esc</kbd>
         </div>
         <div className="pal-list" ref={listRef}>
@@ -40,13 +60,14 @@ export default function CommandPalette({ commands, onClose }) {
             return (
               <button key={c.id} className={`pal-item ${i === idx ? "on" : ""}`} onMouseEnter={() => setIdx(i)} onClick={() => run(c)}>
                 {Icon && <Icon size={16} />}
-                <span className="pal-label">{c.label}</span>
+                <span className="pal-label">{c.label}{c.sub && <small className="pal-sub">{c.sub}</small>}</span>
                 {c.group && <span className="pal-group">{c.group}</span>}
                 {i === idx && <CornerDownLeft size={13} className="pal-enter" />}
               </button>
             );
           })}
-          {!list.length && <div className="pal-empty">No matches</div>}
+          {found.busy && <div className="pal-empty"><Loader2 size={14} className="spinning" /> Searching inside your notes…</div>}
+          {!list.length && !found.busy && <div className="pal-empty">No matches</div>}
         </div>
       </div>
     </div>

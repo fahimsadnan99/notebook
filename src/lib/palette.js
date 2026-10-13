@@ -49,6 +49,11 @@ export const DEFAULT_STYLE = {
   stroke: "auto", fill: null, width: 3, dash: "solid", opacity: 1, fontSize: 24,
   font: "inter", bold: false, italic: false, underline: false, strike: false, align: "left",
   effect: "none", fx2: "#ec4899", hlBg: null,
+  beautify: "ink", // handwriting: "off" | "smooth" | "ink"
+  inkBold: false, inkItalic: false, // bold / italic handwriting
+  scratch: true, // zigzag over writing erases it
+  pressure: true, // stylus pressure changes line width
+  math: true, // lines ending with "=" get their answer
 };
 
 export const EFFECTS = [

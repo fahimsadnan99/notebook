@@ -1,5 +1,6 @@
 import { resolveColor, mix, isDarkColor, FX2_EFFECTS } from "./palette.js";
 import { norm, polygonOf, wrapText, fontSpec, LINE_H, STICKY_PAD } from "./geometry.js";
+import { shownText, linkBoxes } from "./links.js";
 
 /* ------------------------------------------------------------ images/fonts */
 const imgCache = new Map();
@@ -88,6 +89,24 @@ export function drawBackground(ctx, w, h, view, bg, theme, paper, gap, sheets) {
   }
 }
 
+/* ------------------------------------------------------------------- links */
+// Links are redrawn on top of the text in link blue, with an underline.
+function drawLinks(ctx, o, spec, theme) {
+  const boxes = linkBoxes(o);
+  if (!boxes.length) return;
+  const size = o.size, off = ((LINE_H - 1) * size) / 2;
+  ctx.save();
+  ctx.font = spec; ctx.textBaseline = "top"; ctx.setLineDash([]); ctx.shadowBlur = 0;
+  ctx.fillStyle = ctx.strokeStyle = theme === "dark" ? "#60a5fa" : "#2563eb";
+  ctx.lineWidth = Math.max(1.2, size / 16);
+  for (const b of boxes) {
+    ctx.fillText(b.str, b.x, b.y + off);
+    const uy = b.y + off + size * 1.02;
+    ctx.beginPath(); ctx.moveTo(b.x, uy); ctx.lineTo(b.x + b.w, uy); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /* ------------------------------------------------------------------ shapes */
 function dashOf(o) {
   const w = o.width || 2;
@@ -104,7 +123,7 @@ function roundRectPath(ctx, x, y, w, h, r) {
 function shapePath(ctx, o) {
   const b = norm(o);
   ctx.beginPath();
-  if (o.type === "rect") roundRectPath(ctx, b.x, b.y, b.w, b.h, Math.max(0, Math.min(10, b.w / 4, b.h / 4)));
+  if (o.type === "rect") { ctx.rect(b.x, b.y, b.w, b.h); ctx.lineJoin = "miter"; }
   else if (o.type === "ellipse") ctx.ellipse(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, b.h / 2, 0, 0, Math.PI * 2);
   else {
     const p = polygonOf(o);
@@ -203,6 +222,49 @@ function drawTextLines(ctx, o, lines, x, y, W, size, spec, theme, px, fx) {
   }
 }
 
+// Bold handwriting is drawn thicker; the stroke keeps its normal width setting.
+const penWidth = (o) => (o.width || 1) * (o.bold ? 1.7 : 1);
+
+// "Ink" pen strokes: a filled outline whose width tapers at both ends, like a real pen.
+function drawInk(ctx, pts, w) {
+  // Dense points along the same smooth curve the normal pen draws (3rd value = stylus pressure).
+  const pr = (q) => (q.length > 2 ? q[2] : 0.5);
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (pr(a) + pr(b)) / 2];
+  const c = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const b = pts[i];
+    const m = mid(pts[i], pts[i + 1]);
+    const a0 = i === 1 ? pts[0] : mid(pts[i - 1], pts[i]);
+    for (const t of [0.25, 0.5, 0.75, 1]) {
+      const u = 1 - t;
+      c.push([u * u * a0[0] + 2 * u * t * b[0] + t * t * m[0], u * u * a0[1] + 2 * u * t * b[1] + t * t * m[1], u * u * pr(a0) + 2 * u * t * pr(b) + t * t * pr(m)]);
+    }
+  }
+  c.push(pts[pts.length - 1]);
+  const n = c.length;
+  const len = [0];
+  for (let i = 1; i < n; i++) len.push(len[i - 1] + Math.hypot(c[i][0] - c[i - 1][0], c[i][1] - c[i - 1][1]));
+  const total = len[n - 1];
+  const T = Math.max(0.001, Math.min(total * 0.3, w * 6));
+  const ease = (x) => { x = Math.min(1, x / T); return x * x * (3 - 2 * x); };
+  // Light touch = thin, firm press = thick (0.5 = normal width; mouse/finger strokes have no pressure).
+  const half = c.map((q, i) => (w / 2) * (0.3 + 0.7 * Math.min(ease(len[i]), ease(total - len[i]))) * (0.3 + 1.4 * pr(q)));
+  const ang = c.map((_, i) => {
+    const p = c[Math.max(0, i - 1)], q = c[Math.min(n - 1, i + 1)];
+    return Math.atan2(q[1] - p[1], q[0] - p[0]);
+  });
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = c[i][0] - Math.sin(ang[i]) * half[i], y = c[i][1] + Math.cos(ang[i]) * half[i];
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.arc(c[n - 1][0], c[n - 1][1], half[n - 1], ang[n - 1] + Math.PI / 2, ang[n - 1] - Math.PI / 2, true);
+  for (let i = n - 1; i >= 0; i--) ctx.lineTo(c[i][0] + Math.sin(ang[i]) * half[i], c[i][1] - Math.cos(ang[i]) * half[i]);
+  ctx.arc(c[0][0], c[0][1], half[0], ang[0] - Math.PI / 2, ang[0] - Math.PI * 1.5, true);
+  ctx.closePath();
+  ctx.fill();
+}
+
 /* ------------------------------------------------------------------ object */
 export function drawObject(ctx, o, theme, opts = {}) {
   const px = opts.pxScale || 1;
@@ -221,10 +283,14 @@ export function drawObject(ctx, o, theme, opts = {}) {
       const pts = o.points;
       if (pts.length === 1) {
         ctx.beginPath();
-        ctx.arc(pts[0][0], pts[0][1], o.width / 2, 0, Math.PI * 2);
+        ctx.arc(pts[0][0], pts[0][1], penWidth(o) / 2, 0, Math.PI * 2);
         ctx.fillStyle = stroke;
         ctx.fill();
+      } else if (o.ink || o.pr) {
+        ctx.fillStyle = stroke;
+        drawInk(ctx, pts, penWidth(o));
       } else {
+        ctx.lineWidth = penWidth(o);
         ctx.beginPath();
         ctx.moveTo(pts[0][0], pts[0][1]);
         for (let i = 1; i < pts.length - 1; i++) {
@@ -262,7 +328,7 @@ export function drawObject(ctx, o, theme, opts = {}) {
     case "diamond":
       shapePath(ctx, o);
       if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-      ctx.stroke();
+      if (stroke) ctx.stroke(); // stroke null = shape without outline
       break;
     case "section": {
       const b = norm(o);
@@ -294,9 +360,10 @@ export function drawObject(ctx, o, theme, opts = {}) {
       const spec = fontSpec(o);
       ensureFont(spec, opts.onFont);
       ctx.font = spec;
-      const lines = o.text.split("\n");
+      const lines = shownText(o.text).split("\n");
       const W = Math.max(8, ...lines.map((l) => ctx.measureText(l).width));
       drawTextLines(ctx, o, lines, o.x, o.y, W, o.size, spec, theme, px, true);
+      drawLinks(ctx, o, spec, theme);
       break;
     }
     case "sticky": {
@@ -314,9 +381,10 @@ export function drawObject(ctx, o, theme, opts = {}) {
       const spec = fontSpec(o);
       ensureFont(spec, opts.onFont);
       const inner = b.w - 2 * STICKY_PAD;
-      const lines = wrapText(o.text, inner, spec);
+      const lines = wrapText(shownText(o.text), inner, spec);
       const textObj = { ...o, stroke: o.stroke === "auto" ? "#1e293b" : o.stroke, effect: "none", hlBg: null };
       drawTextLines(ctx, textObj, lines, b.x + STICKY_PAD, b.y + STICKY_PAD, inner, o.size, spec, theme, px, false);
+      drawLinks(ctx, o, spec, isDarkColor(fill || "#fef08a") ? "dark" : "light");
       break;
     }
     case "image": {

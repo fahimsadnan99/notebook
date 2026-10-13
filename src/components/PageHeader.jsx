@@ -24,7 +24,7 @@ function EmojiPicker({ onPick, onClose, hasIcon }) {
   );
 }
 
-export default function PageHeader({ cover, icon, title, collapsed, onToggle, onTitle, onIcon, onCover, onRemoveCover }) {
+export default function PageHeader({ cover, icon, title, collapsed, onToggle, onTitle, onIcon, onCover, onRemoveCover, readOnly }) {
   const [text, setText] = useState(title || "");
   const [emoji, setEmoji] = useState(false);
   useEffect(() => setText(title || ""), [title]);
@@ -45,14 +45,15 @@ export default function PageHeader({ cover, icon, title, collapsed, onToggle, on
         <div className="ph-main">
           <div className="ph-icon-wrap">
             {icon ? (
-              <button className="ph-icon" onClick={() => setEmoji(true)} title="Change icon">{icon}</button>
-            ) : (
+              <button className="ph-icon" onClick={() => !readOnly && setEmoji(true)} title={readOnly ? "" : "Change icon"}>{icon}</button>
+            ) : !readOnly && (
               <button className="ph-add" onClick={() => setEmoji(true)}><Smile size={14} /> Add icon</button>
             )}
             {emoji && <EmojiPicker hasIcon={!!icon} onPick={(e) => { setEmoji(false); onIcon(e); }} onClose={() => setEmoji(false)} />}
           </div>
           <input
             className="ph-title"
+            readOnly={readOnly}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onBlur={commit}
@@ -61,13 +62,13 @@ export default function PageHeader({ cover, icon, title, collapsed, onToggle, on
           />
         </div>
         <div className="ph-actions">
-          {cover ? (
+          {readOnly ? null : cover ? (
             <>
-              <button className="ph-btn" onClick={onCover}><ImageIcon size={14} /> Change cover</button>
-              <button className="ph-btn" onClick={onRemoveCover}><X size={14} /> Remove</button>
+              <button className="ph-btn" onClick={onCover}><ImageIcon size={14} /> <span className="ph-txt">Change cover</span></button>
+              <button className="ph-btn" onClick={onRemoveCover}><X size={14} /> <span className="ph-txt">Remove</span></button>
             </>
           ) : (
-            <button className="ph-btn" onClick={onCover}><ImagePlus size={14} /> Add cover</button>
+            <button className="ph-btn" onClick={onCover}><ImagePlus size={14} /> <span className="ph-txt">Add cover</span></button>
           )}
           <button className="ph-btn icon" onClick={onToggle} title="Hide header"><ChevronUp size={15} /></button>
         </div>

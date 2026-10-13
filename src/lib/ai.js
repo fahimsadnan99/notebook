@@ -33,7 +33,8 @@ export const TEXT_ACTIONS = {
 
 /* ------------------------------------------------------------ providers */
 const IMG_BASE = "https://image.pollinations.ai/prompt/";
-const TEXT_URL = "https://text.pollinations.ai/openai";
+// In `npm run dev` this goes through the dev server (see vite.config.js): the service blocks localhost pages.
+const TEXT_URL = import.meta.env.DEV ? "/ai-text/openai" : "https://text.pollinations.ai/openai";
 
 export async function generateImage({ prompt, styleId, sizeId, seed, model = "flux" }, signal) {
   const style = IMAGE_STYLES.find((s) => s.id === styleId) || IMAGE_STYLES[0];
@@ -68,6 +69,57 @@ async function chat(system, user, signal) {
 export function runTextAI(action, text, signal) {
   const a = TEXT_ACTIONS[action];
   return chat(`You are a careful writing assistant inside a note-taking app. ${a.prompt} Do not add quotes, explanations or markdown.`, text, signal);
+}
+
+// "Ask your notes": pick the pages that best match the question, send them as numbered sources.
+export function pickSources(question, pages, max = 5) {
+  const words = [...new Set(question.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3))];
+  const scored = pages.filter((p) => (p.text || "").trim()).map((p) => {
+    const t = (p.text || "").toLowerCase(), title = (p.title || "").toLowerCase();
+    let score = 0, first = -1;
+    for (const w of words) {
+      let i = t.indexOf(w), n = 0;
+      if (i >= 0 && (first < 0 || i < first)) first = i;
+      while (i >= 0 && n < 20) { n++; i = t.indexOf(w, i + w.length); }
+      score += n + (title.includes(w) ? 3 : 0);
+    }
+    return { ...p, score, first };
+  });
+  return scored.filter((p) => p.score > 0).sort((a, b) => b.score - a.score).slice(0, max).map((p) => {
+    const start = Math.max(0, p.first - 600); // the part of the page around the first match
+    return { ...p, excerpt: (start ? "…" : "") + p.text.slice(start, start + 1600) };
+  });
+}
+
+export async function askNotes(question, sources, history, signal) {
+  const ctx = sources.map((s, i) => `[${i + 1}] ${s.nbName} / ${s.title}\n${s.excerpt}`).join("\n\n");
+  const past = history.slice(-4).map((m) => `${m.role === "user" ? "Student" : "You"}: ${m.text}`).join("\n");
+  return chat(
+    "You are a study assistant inside a note-taking app. Answer the student's question using ONLY their notes below. " +
+      "Cite the notes you used like [1] or [2]. If the notes do not contain the answer, say that clearly in one sentence; " +
+      "you may then add a short general answer that starts with \"Not in your notes:\". Answer in the same language as the question. Be concise. No markdown tables.\n\n" +
+      `NOTES:\n${ctx || "(no matching notes)"}`,
+    (past ? `Earlier conversation:\n${past}\n\n` : "") + `Question: ${question}`,
+    signal
+  );
+}
+
+// Study helper: turn a page's notes into question/answer flashcards (same language as the notes).
+export async function makeFlashcards(notes, signal) {
+  const out = await chat(
+    "You make study flashcards from a student's notes. Write 6 to 10 short question/answer pairs that test the key facts and ideas in the notes. " +
+      "Use the same language as the notes. Answers must be short (max 25 words). " +
+      'Return ONLY a JSON array like [{"q":"question","a":"answer"}] with no other text.',
+    notes.slice(0, 6000),
+    signal
+  );
+  const json = out.slice(out.indexOf("["), out.lastIndexOf("]") + 1);
+  let cards = [];
+  try { cards = JSON.parse(json); } catch { throw new Error("The AI answer could not be read. Please try again."); }
+  cards = cards.filter((c) => c && typeof c.q === "string" && typeof c.a === "string" && c.q.trim() && c.a.trim())
+    .map((c) => ({ q: c.q.trim(), a: c.a.trim() }));
+  if (!cards.length) throw new Error("The AI did not make any cards. Add more notes and try again.");
+  return cards;
 }
 
 export function enhancePrompt(prompt, signal) {

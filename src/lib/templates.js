@@ -106,4 +106,23 @@ export const TEMPLATES = [
       ],
     }),
   },
+  {
+    // Cornell method: notes on the right, cue questions on the left, a summary at the bottom.
+    id: "cornell", name: "Cornell notes", desc: "Cues, notes and summary", emoji: "🧠", cover: coverCss("ocean"),
+    build: () => ({
+      bg: "lines", paper: "#fbfdff", icon: "🧠", cover: coverCss("ocean"),
+      objects: [
+        T(60, 36, "Topic:", { size: 40, font: "display", bold: true, stroke: "#1e3a8a" }),
+        T(60, 96, "Date: ____ / ____ / ______        Subject: ______________", { size: 20, stroke: "#64748b" }),
+        L(60, 150, 1000, 150, { stroke: "#1e3a8a", width: 3 }),
+        L(300, 150, 300, 880, { stroke: "#ef4444", width: 2 }),
+        T(76, 166, "Cues / questions", { size: 22, bold: true, stroke: "#b91c1c" }),
+        T(320, 166, "Notes", { size: 22, bold: true, stroke: "#1e3a8a" }),
+        T(76, 206, "• Key words\n• Questions\n• Formulas", { size: 18, stroke: "#94a3b8" }),
+        L(60, 880, 1000, 880, { stroke: "#1e3a8a", width: 3 }),
+        T(76, 896, "Summary", { size: 22, bold: true, stroke: "#047857" }),
+        T(76, 936, "Sum up the main ideas in 2–3 sentences…", { size: 18, stroke: "#94a3b8" }),
+      ],
+    }),
+  },
 ];
