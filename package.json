@@ -13,7 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "firebase": "^12.19.0",
+    "firebase": "^13.0.0",
     "lucide-react": "^1.56.0",
     "pdfjs-dist": "^6.4.299",
     "react": "^19.3.0",
