@@ -228,7 +228,9 @@ export function isScribble(pts, zoom = 1) {
     if (i) len += Math.hypot(x - pts[i - 1][0], y - pts[i - 1][1]);
   }
   const w = x1 - x0, h = y1 - y0, long = Math.max(w, h);
-  if (long * zoom < 24 || len < long * 3.5) return false;
+  // Letters such as M, W, ম or ষ go up and down a few times too, so a scratch-out has to be wider and
+  // go back and forth more often than any letter does.
+  if (long * zoom < 36 || len < long * 4.5) return false;
   const ax = w >= h ? 0 : 1, th = long * 0.2;
   // A scratch-out moves mostly straight back and forth; circles and spirals curve (about 64%).
   let along = 0;
@@ -242,7 +244,7 @@ export function isScribble(pts, zoom = 1) {
     if (dir >= 0 && hi - v > th) { if (dir > 0) turns++; dir = -1; lo = v; }
     else if (dir <= 0 && v - lo > th) { if (dir < 0) turns++; dir = 1; hi = v; }
   }
-  return turns >= 4;
+  return turns >= 5;
 }
 
 // What a scratch-out stroke covers: strokes with most of their points under it, and other objects mostly under it.

@@ -939,3 +939,11 @@ button:focus:not(:focus-visible) { outline: none; }
 .login { grid-template-columns: minmax(0, 1fr); }
 .login-card { width: min(440px, 100%); justify-self: center; }
 @media (max-width: 480px) { .login-card { padding: 30px 20px 22px; } }
+
+/* ---------- touch & stylus: the app is not a document – no text selection, "Copy" bubble or magnifier
+   from a long press / held pen (inputs, text boxes and the shared page text stay selectable) */
+.shell, .shell * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.shell input, .shell textarea, .shell [contenteditable="true"], .shell .selectable, .shell .selectable * { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+.shell .ask-bubble, .shell .ask-bubble * { -webkit-user-select: text; user-select: text; }
+.editor canvas { -webkit-user-drag: none; }
+html, body { overscroll-behavior: none; }

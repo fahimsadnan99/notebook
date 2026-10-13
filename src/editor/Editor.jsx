@@ -86,7 +86,7 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
       selection: [], preview: null, drag: null, marquee: null, erasing: null, editing: null, editKey: 0,
       undo: [], redo: [], pointers: new Map(), space: false, showHelp: false,
       lastCoalesce: null, lastCoalesceAt: 0, size: { w: 1, h: 1 }, dpr: 1, raf: 0, uiDirty: false,
-      penSeen: false, penId: null, lasso: null,
+      penSeen: false, penId: null, penUpAt: 0, ptype: new Map(), dragBy: null, lasso: null,
       recs: initial.recs || [], lecture: null, playback: null, seek: null, marks: initial.marks || [], outline: false,
       snap: (() => { try { return localStorage.getItem("nb-snap") === "1"; } catch { return false; } })(), guides: null,
       snapT: 0, rec: null, listening: false, recText: "", recInterim: "", aiBusy: false,
@@ -361,19 +361,35 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const { w, h } = s.size, dpr = s.dpr, { x: vx, y: vy, zoom: z } = s.view, theme = rtheme();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawBackground(ctx, w, h, s.view, s.bg, theme, s.paper, s.gap, s.sheets);
-
-    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * vx, dpr * vy);
-    const vis = { x: -vx / z, y: -vy / z, w: w / z, h: h / z };
-    const editingId = s.editing && s.editing.id;
     const opts = { onImage: requestDraw, onFont: onFontLoaded, pxScale: dpr * z };
-    for (const o of s.objects) {
-      if (o.id === editingId) continue;
-      if (!intersects(inflate(bounds(o), (o.width || 0) + 12 + (o.size || 0) * 0.3), vis)) continue;
-      const later = s.playback && o.rec && o.rec.id === s.playback.id && o.rec.ms > s.playback.ms;
-      drawObject(ctx, o, theme, { ...opts, alpha: s.erasing && s.erasing.has(o.id) ? 0.2 : later ? 0.13 : 1 });
+    // While a stroke is being drawn nothing else on the page changes, so the finished page is kept as a
+    // picture and each frame only adds the new ink. Busy pages then write as smoothly as empty ones.
+    const live = !!(s.drag && s.drag.type === "draw" && s.preview);
+    const sc = s.scene;
+    if (live && sc && sc.objs === s.objects && sc.vx === vx && sc.vy === vy && sc.z === z && sc.cw === canvas.width && sc.ch === canvas.height && sc.theme === theme) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(sc.canvas, 0, 0);
+    } else {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawBackground(ctx, w, h, s.view, s.bg, theme, s.paper, s.gap, s.sheets);
+      ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * vx, dpr * vy);
+      const vis = { x: -vx / z, y: -vy / z, w: w / z, h: h / z };
+      const editingId = s.editing && s.editing.id;
+      for (const o of s.objects) {
+        if (o.id === editingId) continue;
+        if (!intersects(inflate(bounds(o), (o.width || 0) + 12 + (o.size || 0) * 0.3), vis)) continue;
+        const later = s.playback && o.rec && o.rec.id === s.playback.id && o.rec.ms > s.playback.ms;
+        drawObject(ctx, o, theme, { ...opts, alpha: s.erasing && s.erasing.has(o.id) ? 0.2 : later ? 0.13 : 1 });
+      }
+      if (live) {
+        const cv = (sc && sc.canvas) || document.createElement("canvas");
+        if (cv.width !== canvas.width || cv.height !== canvas.height) { cv.width = canvas.width; cv.height = canvas.height; }
+        const cx = cv.getContext("2d");
+        cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(0, 0, cv.width, cv.height); cx.drawImage(canvas, 0, 0);
+        s.scene = { canvas: cv, objs: s.objects, vx, vy, z, cw: canvas.width, ch: canvas.height, theme };
+      } else if (sc) sc.objs = null; // stale once the stroke is done
     }
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * vx, dpr * vy);
     if (s.preview) drawObject(ctx, s.preview, theme, opts);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -841,6 +857,9 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
     clearSnap();
     const o = s.preview;
     if (!o || o.type !== "pen" || o.hl || o.points.length < 8) return;
+    // Only big strokes turn into shapes: a short pause inside a letter must never change the writing.
+    const b = bounds({ type: "pen", points: o.points });
+    if (Math.hypot(b.w, b.h) * s.view.zoom < 90) return;
     s.snapT = setTimeout(() => {
       const cur = s.preview;
       if (!cur || cur.type !== "pen" || !s.drag || s.drag.type !== "draw") return;
@@ -859,14 +878,32 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
     if (e.button === 2) return;
     if (s.present) { s.present.tap = { x: e.clientX, y: e.clientY }; showControls(); return; }
     // Palm rejection: once a stylus is used, touches made while it is writing are ignored.
-    if (e.pointerType === "pen") { s.penSeen = true; s.penId = e.pointerId; }
-    else if (e.pointerType === "touch" && s.penId !== null) return;
+    if (e.pointerType === "pen") {
+      // The pen came down again before the last stroke was closed (fast writing, a lost "up" on iPad):
+      // keep that stroke instead of letting the new one replace it.
+      if (s.drag && s.drag.type === "draw" && s.dragBy === "pen" && s.lastPen) onPointerUp(s.lastPen);
+      s.lastPen = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, pointerType: "pen" };
+      s.penSeen = true; s.penId = e.pointerId;
+      // A palm that touched down just before the pen: forget it and undo whatever it did (pan, stray ink),
+      // so the pen and the palm are never taken for a two-finger pinch.
+      if (s.drag && s.dragBy === "touch") {
+        if (s.drag.view0) { s.view = s.drag.view0; viewChanged(); }
+        s.drag = null; s.preview = null; s.marquee = null; s.lasso = null; clearSnap();
+      }
+      for (const id of [...s.pointers.keys()]) if (s.ptype.get(id) !== "pen") s.pointers.delete(id);
+    } else if (e.pointerType === "touch" && s.penSeen) {
+      if (s.penId !== null) return; // the pen is writing: every touch now is the hand resting on the screen
+      if (Date.now() - s.penUpAt < 450) return; // the palm often lands right as the pen lifts
+      if ((e.width || 0) > 44 || (e.height || 0) > 44) return; // a wide contact is a palm, not a fingertip
+    }
     const eraserEnd = e.pointerType === "pen" && (e.button === 5 || (e.buttons & 32) !== 0);
     commitEdit();
     const canvas = canvasRef.current;
     try { canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     const pos = screenPos(e);
     s.pointers.set(e.pointerId, pos);
+    s.ptype.set(e.pointerId, e.pointerType);
+    s.dragBy = e.pointerType;
 
     if (s.pointers.size === 2) {
       const [a, b] = [...s.pointers.values()];
@@ -981,7 +1018,8 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
         width: hl ? hlW(st.width) : st.width, opacity: st.opacity, dash: "solid", ...(hl ? { hl: true } : {}),
         ...(pretty && st.beautify === "ink" ? { ink: true } : {}), ...(usePr ? { pr: true } : {}),
       };
-      s.drag = { type: "draw", pretty, raw: [p.x, p.y] };
+      // A stylus is already steady, so its ink follows the tip closely; mouse and fingers get more smoothing.
+      s.drag = { type: "draw", pretty, raw: [p.x, p.y], follow: e.pointerType === "pen" ? 0.72 : 0.45 };
       if (s.lecture) s.preview.rec = { id: s.lecture.id, ms: Date.now() - s.lecture.start };
     } else {
       const fillNew = t === "line" || t === "arrow" ? null : t === "section" ? st.fill || "#6366f1" : st.fill;
@@ -1018,6 +1056,7 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
   }
 
   function onPointerMove(e) {
+    if (e.pointerType === "pen") s.lastPen = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, pointerType: "pen" };
     const pos = screenPos(e);
     if (s.pointers.has(e.pointerId)) s.pointers.set(e.pointerId, pos);
     const d = s.drag;
@@ -1054,7 +1093,7 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
           if (d.pretty) {
             // Stabilizer: the ink follows the pointer a little behind, which irons out hand shake.
             d.raw = o.pr ? [q.x, q.y, pv] : [q.x, q.y];
-            q = { x: last[0] + (q.x - last[0]) * 0.45, y: last[1] + (q.y - last[1]) * 0.45 };
+            q = { x: last[0] + (q.x - last[0]) * d.follow, y: last[1] + (q.y - last[1]) * d.follow };
           }
           if (Math.hypot(q.x - last[0], q.y - last[1]) * s.view.zoom > 0.8) { o.points.push(o.pr ? [q.x, q.y, pv] : [q.x, q.y]); added = true; }
         }
@@ -1139,7 +1178,8 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
       return;
     }
     s.guides = null; s.bindHover = null;
-    if (e.pointerId === s.penId) s.penId = null;
+    if (e.pointerId === s.penId) { s.penId = null; s.penUpAt = Date.now(); }
+    s.ptype.delete(e.pointerId);
     if (!s.pointers.delete(e.pointerId)) return;
     const tap = s.linkTap; s.linkTap = null;
     if (tap) {
@@ -1250,6 +1290,14 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
       }
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
+    // iPad/iPhone: a pen held down (or a long press) would otherwise start the browser's own text
+    // selection, "Copy" bubble, magnifier, double-tap zoom or page pinch. The canvas handles all of it itself.
+    const noNative = (e) => { if (e.cancelable) e.preventDefault(); };
+    canvas.addEventListener("touchstart", noNative, { passive: false });
+    canvas.addEventListener("touchmove", noNative, { passive: false });
+    canvas.addEventListener("gesturestart", noNative);
+    canvas.addEventListener("contextmenu", noNative);
+    canvas.addEventListener("selectstart", noNative);
 
     const onKeyDown = (e) => {
       if (isTyping(e.target)) return;
@@ -1352,6 +1400,7 @@ const Editor = forwardRef(function Editor({ initial, theme, onChange, onToast, o
         s.lecture = null;
       }
       canvas.removeEventListener("wheel", onWheel);
+      for (const t of ["touchstart", "touchmove", "gesturestart", "contextmenu", "selectstart"]) canvas.removeEventListener(t, noNative);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       document.removeEventListener("copy", onCopy);
